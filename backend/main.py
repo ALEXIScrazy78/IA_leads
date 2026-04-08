@@ -31,8 +31,8 @@ class SupabaseClient:
     @classmethod
     def get_instance(cls) -> Client:
         if cls._instance is None:
-            with cls._lock:                     # Solo un hilo entra a la vez
-                if cls._instance is None:       # Double-checked locking
+            with cls._lock:                   
+                if cls._instance is None:    
                     url = os.getenv("SUPABASE_URL")
                     key = os.getenv("SUPABASE_KEY")
                     if not url or not key:
@@ -83,7 +83,7 @@ async def analizar_lead_con_ia(nombre: str, mensaje: str, empresa: str = None):
                 url,
                 headers=headers,
                 json={
-                    "model": "stepfun/step-3.5-flash:free",
+                    "model": "nvidia/nemotron-3-super-120b-a12b:free",
                     "messages": [
                         {"role": "system", "content": prompt_sistema},
                         {"role": "user", "content": prompt_usuario}
@@ -119,6 +119,7 @@ def root():
 
 @app.post("/api/v1/leads")
 async def registrar_y_clasificar(lead: LeadCreate, db: Client = Depends(get_supabase)):
+    print(f"DEBUG: Datos recibidos del Front: {lead}")
     try:
         analisis = await analizar_lead_con_ia(lead.nombre, lead.mensaje, lead.empresa)
  
