@@ -1,4 +1,15 @@
-.env
-.venv/
+# Python
 __pycache__/
+*.py[cod]
+*$py.class
 venv/
+.venv/
+env/
+
+# Variables de entorno (SECRETOS)
+.env
+.env.local
+.env.*
+
+# Base de datos local (si usas sqlite)
+*.sqlite3
