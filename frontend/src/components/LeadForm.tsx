@@ -127,7 +127,7 @@ export default function LeadForm() {
                     {loading ? (
                         <>
                             <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                            Analizando con IA...
+                            Analizando su propuesta
                         </>
                     ) : (
                         <><Send size={20} /> Iniciar</>
