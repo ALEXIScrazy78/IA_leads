@@ -51,40 +51,53 @@ class LeadCreate(BaseModel):
     empresa: str | None = None
     mensaje: str
 
-# --- IA: ANÁLISIS + PROPUESTA SÓLIDA ---
+# --- IA: ANÁLISIS MEJORADO CON RÚBRICA ---
 async def analizar_lead_con_ia(nombre: str, mensaje: str, empresa: str = None):
     api_key = os.getenv("OPENROUTER_API_KEY")
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
     prompt_sistema = (
-        "Eres un consultor senior de Estrategia en IA en J&A Inteligencia. "
-        "Tu objetivo es generar un análisis técnico y una propuesta comercial sólida."
+        "Eres un Analista Senior de Ventas y Revenue en J&A Inteligencia. "
+        "Tu tarea es calificar leads, predecir su valor comercial y probabilidad de éxito."
     )
 
     prompt_usuario = f"""
-    Prospecto: {nombre} | Empresa: {empresa if empresa else 'No especificada'}
+    Analiza este prospecto:
+    Nombre: {nombre} | Empresa: {empresa if empresa else 'No especificada'}
     Mensaje: {mensaje}
 
-    Devuelve un JSON exacto con:
+    SERVICIOS Y PRECIOS ESTIMADOS:(si el mensaje es irrelevante asigna $0)
+    1. Automatización (RPA/IA): $200 - $500
+    2. Chatbots Inteligentes: $150 - $350
+    3. Análisis de Datos/Dashboards: $300 - $600
+    4. Consultoría: $300+
+
+
+    Calcula la 'probabilidad_cierre' (0.0 a 1.0) basado en la urgencia y claridad del mensaje.
+    Estima el 'valor_estimado_usd' según el servicio que mejor encaje.
+    
+    Devuelve un JSON exacto:
     {{
         "industria": "string",
-        "tamano_empresa": "string",
         "intencion_detectada": "string",
+        "servicio_sugerido": "string",
         "score_ia": float,
-        "clasificacion": "hot, warm, cold",
-        "brief_comercial": "Resumen técnico de 2 líneas para dashboard.",
-        "propuesta_email": "Cuerpo de correo profesional con: 1. Saludo, 2. Diagnóstico del problema, 3. Solución técnica (IA), 4. Pasos a seguir (3 pasos), 5. CTA para reunión."
+        "probabilidad_cierre": float,
+        "valor_estimado_usd": float,
+        "clasificacion": "hot" | "warm" | "cold",
+        "brief_comercial": "string",
+        "propuesta_email": "string"
     }}
     """
-
+    
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 url,
                 headers=headers,
                 json={
-                    "model": "nvidia/nemotron-3-super-120b-a12b:free",
+                    "model": "nvidia/nemotron-3-nano-30b-a3b:free",
                     "messages": [
                         {"role": "system", "content": prompt_sistema},
                         {"role": "user", "content": prompt_usuario}
@@ -98,60 +111,65 @@ async def analizar_lead_con_ia(nombre: str, mensaje: str, empresa: str = None):
             return json.loads(content)
     except Exception as e:
         print(f"Error IA: {e}")
-        return {"score_ia": 0.1, "clasificacion": "error", "brief_comercial": "Error", "propuesta_email": "Error"}
+        return {
+            "score_ia": 0.1, 
+            "clasificacion": "cold", 
+            "brief_comercial": "Error", 
+            "propuesta_email": "Error"
+        }
 
-# --- ENDPOINT ---
+@app.get("/")
+async def root():
+    return {"message": "Bienvenido a la API de J&A Inteligencia. Visita /docs para la documentación."}
+
+@app.get("/api/v1/status")
+async def get_status():
+    return {
+        "status": "online",
+        "message": "J&A Intelligence Engine is running",
+        "version": "1.0.0"
+    }
+
+# ENDPOINT REGISTRAR 
 @app.post("/api/v1/leads")
 async def registrar_y_clasificar(lead: LeadCreate, db: Client = Depends(get_supabase)):
     try:
-        # 1. Ejecutar IA
         analisis = await analizar_lead_con_ia(lead.nombre, lead.mensaje, lead.empresa)
 
-        # 2. Guardar en Supabase (Solo datos esenciales + brief corto)
         data_para_supabase = {
             "nombre_contacto": lead.nombre,
             "email": lead.email,
             "empresa": lead.empresa,
             "mensaje_original": lead.mensaje,
             "industria": analisis.get("industria"),
-            "tamano_empresa": analisis.get("tamano_empresa"),
-            "intencion_detectada": analisis.get("intencion_detectada"),
             "score_ia": analisis.get("score_ia"),
+            "probabilidad_cierre": analisis.get("probabilidad_cierre"),
+            "valor_estimado_usd": analisis.get("valor_estimado_usd"),
             "clasificacion": analisis.get("clasificacion"),
-            "brief_comercial": analisis.get("brief_comercial")
+            "brief_comercial": analisis.get("brief_comercial"),
+            "intencion_detectada": analisis.get("intencion_detectada"),
+            "servicio_sugerido": analisis.get("servicio_sugerido")
         }
 
-        # Insertamos y verificamos éxito
         response = db.table("prospectos").insert(data_para_supabase).execute()
         
-        # 3. Envío de Email (ENVUELTO EN TRY PARA EVITAR ERROR 500)
+        
         try:
-            if analisis.get("score_ia", 0) > 0.3 and analisis.get("propuesta_email") != "Error":
+            if analisis.get("score_ia", 0) > 0.4 and analisis.get("propuesta_email") != "Error":
                 resend.Emails.send({
                     "from": "J&A Inteligencia <onboarding@resend.dev>",
                     "to": lead.email,
-                    "subject": f"Propuesta IA: {lead.empresa or lead.nombre}",
-                    "html": f"""
-                        <div style="font-family: sans-serif; line-height: 1.6; color: #333;">
-                            {analisis['propuesta_email'].replace(chr(10), '<br>')}
-                        </div>
-                    """
+                    "subject": f"Análisis de Optimización para {lead.empresa or lead.nombre}",
+                    "html": f"<div style='font-family:sans-serif;'>{analisis['propuesta_email'].replace(chr(10), '<br>')}</div>"
                 })
         except Exception as email_err:
-            # Si el email falla (por ejemplo, dominio no verificado), el backend NO devuelve 500
-            print(f"DEBUG: El correo no se envió pero el registro fue exitoso: {email_err}")
+            print(f"Error Email: {email_err}")
 
-        return {
-            "status": "success",
-            "message": "Lead registrado correctamente",
-            "data": response.data[0] if response.data else {}
-        }
+        return {"status": "success", "data": response.data[0] if response.data else {}}
 
     except Exception as e:
-        # Solo devolvemos 500 si falla algo realmente crítico (como la conexión a DB)
-        print(f"ERROR CRÍTICO: {e}")
-        raise HTTPException(status_code=500, detail="Error interno al procesar el lead")
-
+        print(f"ERROR: {e}")
+        raise HTTPException(status_code=500, detail="Error interno")
 
 #----CHATBOT
 @app.post("/api/v1/chat")
@@ -190,6 +208,9 @@ async def chat_asistente(payload: dict):
     except Exception as e:
         print(f"Error Chat: {e}")
         return {"response": "Estoy procesando mucha información. ¿Podrías repetirme tu duda?"}
+    
+
+
 #CREACIÓN DE UN CRON PARA MANTENER ACTIVO SUPABASE
 #@app.get("ehttps://tudominio.com/api/v1/health")
 #def health_check(db: Client = Depends(get_supabase)):
