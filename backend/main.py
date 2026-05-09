@@ -4,7 +4,11 @@ import httpx
 import threading
 import resend
 from fastapi import FastAPI, HTTPException, Depends
-from fastapi.middleware.cors import CORSMiddleware
+#from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
+import re
 from pydantic import BaseModel, EmailStr
 from supabase import create_client, Client
 from dotenv import load_dotenv
@@ -17,15 +21,48 @@ resend.api_key = os.getenv("RESEND_API_KEY")
 app = FastAPI(title="AI Lead Intelligence Engine")
 
 # --- CORS CONFIG ---
-_raw_origins = os.getenv("ALLOWED_ORIGINS", "*")
-allowed_origins = [o.strip() for o in _raw_origins.split(",")]
+#_raw_origins = os.getenv("ALLOWED_ORIGINS", "*")
+#allowed_origins = [o.strip() for o in _raw_origins.split(",")]
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+#app.add_middleware(
+#    CORSMiddleware,
+#    allow_origins=allowed_origins,
+#    allow_methods=["*"],
+#    allow_headers=["*"],
+#)
+
+
+# --- CORS CONFIG ---
+ALLOWED_ORIGIN_PATTERNS = [
+    r"https://ia-leads.*\.vercel\.app$",
+    r"http://localhost:\d+$",
+    r"http://127\.0\.0\.1:\d+$",
+]
+
+def is_origin_allowed(origin: str) -> bool:
+    return any(re.match(pattern, origin) for pattern in ALLOWED_ORIGIN_PATTERNS)
+
+class DynamicCORSMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        origin = request.headers.get("origin", "")
+        allowed = is_origin_allowed(origin)
+
+        if request.method == "OPTIONS":
+            response = Response()
+            if allowed:
+                response.headers["Access-Control-Allow-Origin"] = origin
+                response.headers["Access-Control-Allow-Methods"] = "*"
+                response.headers["Access-Control-Allow-Headers"] = "*"
+            return response
+
+        response = await call_next(request)
+        if allowed:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Methods"] = "*"
+            response.headers["Access-Control-Allow-Headers"] = "*"
+        return response
+
+app.add_middleware(DynamicCORSMiddleware)
 
 # --- SUPABASE SINGLETON ---
 class SupabaseClient:
