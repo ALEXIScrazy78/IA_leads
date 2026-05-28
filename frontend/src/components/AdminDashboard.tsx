@@ -9,14 +9,15 @@ import {
 } from 'recharts';
 import { 
   Users, TrendingUp, ChevronRight, X,
-  ShieldCheck, LayoutDashboard, Target, Calendar, LogOut, Mail
+  LayoutDashboard, Target, Calendar, LogOut, Mail, CheckCircle2, MessageSquare
 } from 'lucide-react';
 
 export default function AdminDashboard() {
   const [leads, setLeads] = useState<any[]>([]);
   const [timeData, setTimeData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedLead, setSelectedLead] = useState<any>(null); // Estado para el modal
+  const [selectedLead, setSelectedLead] = useState<any>(null); 
+  const [updating, setUpdating] = useState(false); // Estado para bloquear el botón de aprobación
   const router = useRouter();
 
   const COLORS = ['#ef4444', '#f59e0b', '#64748b'];
@@ -62,6 +63,24 @@ export default function AdminDashboard() {
     setLoading(false);
   }
 
+  // NUEVA FUNCIÓN: Human-in-the-loop (Aprobar / Validar Lead de forma manual)
+  const handleAprobarLead = async (id: string) => {
+    setUpdating(true);
+    const { error } = await supabase
+      .from('prospectos')
+      .update({ clasificacion: 'validado' }) // Cambia el estado en la base de datos
+      .eq('id', id);
+
+    if (!error) {
+      // Actualiza el estado local de manera inmediata sin recargar toda la página
+      setLeads(prev => prev.map(l => l.id === id ? { ...l, clasificacion: 'validado' } : l));
+      setSelectedLead((prev: any) => prev ? { ...prev, clasificacion: 'validado' } : null);
+    } else {
+      alert("Error al actualizar el estado del prospecto.");
+    }
+    setUpdating(false);
+  };
+
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     router.push('/login');
@@ -71,12 +90,12 @@ export default function AdminDashboard() {
     const counts = { hot: 0, warm: 0, cold: 0 };
     leads.forEach(l => {
       const cat = l.clasificacion?.toLowerCase();
-      if (cat === 'hot') counts.hot++;
+      if (cat === 'hot' || cat === 'validado') counts.hot++; // Contamos validados en zona caliente
       else if (cat === 'warm') counts.warm++;
       else counts.cold++;
     });
     return [
-      { name: 'Hot', value: counts.hot },
+      { name: 'Hot / Validated', value: counts.hot },
       { name: 'Warm', value: counts.warm },
       { name: 'Cold', value: counts.cold },
     ];
@@ -103,14 +122,24 @@ export default function AdminDashboard() {
           </div>
 
           <div className="flex items-center gap-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4"> {/* Cambiado a 3 columnas para meter Revenue */}
                 <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-3">
                     <div className="p-2 bg-blue-50 rounded-lg"><Users size={20} className="text-blue-600" /></div>
                     <div><p className="text-[10px] text-slate-400 font-black">LEADS</p><p className="text-lg font-bold">{leads.length}</p></div>
                 </div>
                 <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-3">
                     <div className="p-2 bg-red-50 rounded-lg"><Target size={20} className="text-red-600" /></div>
-                    <div><p className="text-[10px] text-slate-400 font-black">HOT</p><p className="text-lg font-bold">{leads.filter(l => l.clasificacion === 'hot').length}</p></div>
+                    <div><p className="text-[10px] text-slate-400 font-black">HOT</p><p className="text-lg font-bold">{leads.filter(l => l.clasificacion === 'hot' || l.clasificacion === 'validado').length}</p></div>
+                </div>
+                {/* NIVEL 3: KPI DE REVENUE PROYECTADO AUTOMÁTICO */}
+                <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-3">
+                    <div className="p-2 bg-emerald-50 rounded-lg"><TrendingUp size={20} className="text-emerald-600" /></div>
+                    <div>
+                      <p className="text-[10px] text-slate-400 font-black">REVENUE EST.</p>
+                      <p className="text-lg font-bold text-emerald-600">
+                        ${leads.reduce((acc, curr) => acc + (Number(curr.valor_estimado_usd) || 0), 0).toLocaleString()}
+                      </p>
+                    </div>
                 </div>
             </div>
             <button onClick={handleSignOut} className="p-3 bg-white border border-slate-200 rounded-2xl text-slate-400 hover:text-red-600 transition-all shadow-sm">
@@ -165,12 +194,12 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* TABLA */}
+        {/* TABLA MODIFICADA CON NUEVAS COLUMNAS PREDICTIVAS */}
         <div className="bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden">
           <div className="p-6 border-b border-slate-100 flex justify-between items-center">
             <h2 className="font-bold text-slate-800 tracking-tight">Leads Recientes</h2>
             <div className="flex gap-2">
-                <span className="text-[10px] bg-green-50 text-green-600 px-3 py-1 rounded-full font-black border border-green-100 uppercase">Live</span>
+                <span className="text-[10px] bg-green-50 text-green-600 px-3 py-1 rounded-full font-black border border-green-100 uppercase">Live Metrics</span>
             </div>
           </div>
           <div className="overflow-x-auto">
@@ -178,7 +207,11 @@ export default function AdminDashboard() {
               <thead className="bg-slate-50/50">
                 <tr>
                   <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Prospecto</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Score IA</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Clasificación</th>
+                  {/* NIVEL 2: Columna Predictiva Visual */}
+                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Cierre Probable</th>
+                  {/* NIVEL 3: Valor Estimado */}
+                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Valor USD</th>
                   <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Análisis</th>
                   <th className="px-6 py-4 text-right"></th>
                 </tr>
@@ -189,7 +222,7 @@ export default function AdminDashboard() {
                     <td className="px-6 py-6">
                         <div className="flex items-center gap-4">
                             <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-500 font-bold border border-slate-200 uppercase">
-                              {lead.nombre_contacto[0]}
+                              {lead.nombre_contacto?.[0] || 'U'}
                             </div>
                             <div>
                                 <p className="text-slate-900 font-bold text-sm">{lead.nombre_contacto}</p>
@@ -199,12 +232,27 @@ export default function AdminDashboard() {
                     </td>
                     <td className="px-6 py-6 text-center">
                       <div className={`px-2 py-1 inline-block rounded-lg text-[10px] font-black border ${
+                        lead.clasificacion === 'validado' ? 'bg-emerald-50 border-emerald-100 text-emerald-600' :
                         lead.clasificacion === 'hot' ? 'bg-red-50 border-red-100 text-red-600' :
                         lead.clasificacion === 'warm' ? 'bg-orange-50 border-orange-100 text-orange-600' :
                         'bg-slate-100 border-slate-200 text-slate-500'
                       }`}>
                         {lead.clasificacion?.toUpperCase() || 'COLD'}
                       </div>
+                    </td>
+                    {/* BARRA DE PROBABILIDAD (Nivel 2) */}
+                    <td className="px-6 py-6 min-w-[120px]">
+                      <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                        <div 
+                          className={`h-full transition-all ${Number(lead.probabilidad_cierre) > 0.7 ? 'bg-emerald-500' : 'bg-blue-500'}`}
+                          style={{ width: `${(Number(lead.probabilidad_cierre) || 0) * 100}%` }}
+                        />
+                      </div>
+                      <p className="text-[9px] text-slate-400 mt-1 font-bold">{Math.round((Number(lead.probabilidad_cierre) || 0) * 100)}% de éxito</p>
+                    </td>
+                    {/* VALOR ESTIMADO USD (Nivel 3) */}
+                    <td className="px-6 py-6 text-sm font-bold text-slate-700">
+                      ${(Number(lead.valor_estimado_usd) || 0).toLocaleString()}
                     </td>
                     <td className="px-6 py-6 max-w-xs">
                         <p className="text-xs text-slate-500 line-clamp-1 italic">"{lead.brief_comercial || 'Sin análisis'}"</p>
@@ -225,17 +273,18 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* MODAL DE DETALLE (Fuera de la tabla para evitar bugs) */}
+      {/* MODAL CON FUNCIÓN HUMAN-IN-THE-LOOP */}
       {selectedLead && (
         <div className="fixed inset-0 bg-slate-950/40 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
-          <div className="bg-white rounded-[2rem] shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden border border-slate-200 flex flex-col scale-in-center">
+          <div className="bg-white rounded-[2rem] shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden border border-slate-200 flex flex-col scale-in-center">
             {/* Header del Modal */}
             <div className="p-8 border-b border-slate-100 flex justify-between items-start bg-slate-50/50">
               <div>
                 <div className="flex items-center gap-3 mb-2">
                     <span className={`px-2 py-1 rounded-md text-[9px] font-black uppercase border ${
+                        selectedLead.clasificacion === 'validado' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
                         selectedLead.clasificacion === 'hot' ? 'bg-red-50 text-red-600 border-red-100' : 'bg-slate-200 text-slate-600'
-                    }`}>Prioridad {selectedLead.clasificacion}</span>
+                    }`}>{selectedLead.clasificacion}</span>
                     <span className="text-[10px] text-slate-400 font-bold">{new Date(selectedLead.created_at).toLocaleDateString()}</span>
                 </div>
                 <h2 className="text-3xl font-black text-slate-900 tracking-tight">{selectedLead.nombre_contacto}</h2>
@@ -250,16 +299,16 @@ export default function AdminDashboard() {
             </div>
 
             {/* Contenido del Modal */}
-            <div className="p-8 overflow-y-auto space-y-8">
-              {/* Resumen de IA */}
+            <div className="p-8 overflow-y-auto space-y-6 flex-1">
+              {/* Resumen Comercial de IA e Indicadores Financieros */}
               <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Industria</p>
-                      <p className="text-sm font-bold text-slate-700">{selectedLead.industria || 'No detectada'}</p>
-                  </div>
                   <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Servicio Sugerido</p>
                       <p className="text-sm font-bold text-slate-700">{selectedLead.servicio_sugerido || 'Consultoría General'}</p>
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Ingreso Estimado</p>
+                      <p className="text-sm font-bold text-emerald-600">${(Number(selectedLead.valor_estimado_usd) || 0).toLocaleString()} USD</p>
                   </div>
               </div>
 
@@ -275,15 +324,32 @@ export default function AdminDashboard() {
 
               {/* Brief Comercial */}
               <div className="space-y-2">
-                <h4 className="text-xs font-black text-blue-600 uppercase tracking-widest">Brief Ejecutivo</h4>
+                <h4 className="text-xs font-black text-blue-600 uppercase tracking-widest">Brief Ejecutivo (Generado por IA)</h4>
                 <div className="p-5 bg-blue-50/50 border border-blue-100 rounded-2xl text-sm text-slate-800 font-medium leading-relaxed">
                   {selectedLead.brief_comercial}
                 </div>
               </div>
             </div>
             
-            <div className="p-6 bg-slate-50 border-t border-slate-100 text-center">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">J&A Intelligence Protocol</p>
+            {/* FOOTER DEL MODAL CON ACCIONES DE GESTIÓN (Human-in-the-loop) */}
+            <div className="p-6 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-4">
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider">J&A Intelligence</p>
+                
+                <div className="flex gap-2">
+                  {selectedLead.clasificacion !== 'validado' ? (
+                    <button
+                      onClick={() => handleAprobarLead(selectedLead.id)}
+                      disabled={updating}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl flex items-center gap-2 transition-colors disabled:opacity-50"
+                    >
+                      <CheckCircle2 size={16} /> Validar Lead
+                    </button>
+                  ) : (
+                    <span className="text-emerald-600 font-bold text-xs px-3 py-2 bg-emerald-100 rounded-xl flex items-center gap-1.5">
+                      <CheckCircle2 size={16} /> Lead Auditado
+                    </span>
+                  )}
+                </div>
             </div>
           </div>
         </div>

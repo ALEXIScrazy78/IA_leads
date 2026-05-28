@@ -25,6 +25,11 @@ export default function Chatbot() {
     if (!message.trim() || loading) return;
     
     const userMsg = message;
+    
+    // Capturamos el historial exacto que existe justo ANTES de añadir el nuevo mensaje
+    const currentHistory = [...chat];
+
+    // Actualizamos la UI inmediatamente añadiendo el mensaje del usuario
     setChat(prev => [...prev, { role: 'user', text: userMsg }]);
     setMessage("");
     setLoading(true);
@@ -32,18 +37,21 @@ export default function Chatbot() {
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL_CHAT;
       
+      // Enviamos el mensaje actual Y el historial previo al backend de FastAPI
       const res = await fetch(`${apiUrl}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMsg }),
+        body: JSON.stringify({ 
+          message: userMsg,
+          history: currentHistory 
+        }),
       });
 
       if (!res.ok) throw new Error("Error en servidor");
 
       const data = await res.json();
       
-      // Ajusta 'data.response' según lo que devuelva tu FastAPI
-      setChat(prev => [...prev, { role: 'assistant', text: data.response || data.reply || "No entendi la respuesta" }]);
+      setChat(prev => [...prev, { role: 'assistant', text: data.response || data.reply || "No entendí la respuesta" }]);
     } catch (error) {
       setChat(prev => [...prev, { role: 'assistant', text: 'Lo siento, tengo problemas de conexión. Inténtalo más tarde.' }]);
     } finally {
@@ -91,7 +99,7 @@ export default function Chatbot() {
             {loading && (
               <div className="flex justify-start">
                 <div className="bg-slate-200/50 px-4 py-2 rounded-full text-[10px] text-slate-500 animate-pulse font-bold uppercase tracking-widest">
-                  IA Analizando...
+                  SU SOLICITUD SE ESTA PROCESANDO
                 </div>
               </div>
             )}

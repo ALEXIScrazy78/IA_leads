@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import httpx
 import threading
 import resend
@@ -37,6 +38,9 @@ ALLOWED_ORIGIN_PATTERNS = [
     r"https://ia-leads.*\.vercel\.app$",
     r"http://localhost:\d+$",
     r"http://127\.0\.0\.1:\d+$",
+    r"http://127\.0\.0\.1:\d+$",
+    #LOCAL
+    r"http://192\.168\.\d+\.\d+:\d+$",
 ]
 
 def is_origin_allowed(origin: str) -> bool:
@@ -119,7 +123,6 @@ async def analizar_lead_con_ia(nombre: str, mensaje: str, empresa: str = None):
         "industria": "string",
         "intencion_detectada": "string",
         "servicio_sugerido": "string",
-        "score_ia": float,
         "probabilidad_cierre": float,
         "valor_estimado_usd": float,
         "clasificacion": "hot" | "warm" | "cold",
@@ -149,7 +152,8 @@ async def analizar_lead_con_ia(nombre: str, mensaje: str, empresa: str = None):
     except Exception as e:
         print(f"Error IA: {e}")
         return {
-            "score_ia": 0.1, 
+            "probabilidad_cierre": 0.1, 
+            "valor_estimado_usd": 0.0,
             "clasificacion": "cold", 
             "brief_comercial": "Error", 
             "propuesta_email": "Error"
@@ -167,19 +171,19 @@ async def get_status():
         "version": "1.0.0"
     }
 
-# ENDPOINT REGISTRAR 
+# --- ENDPOINT CORREGIDO ---
 @app.post("/api/v1/leads")
 async def registrar_y_clasificar(lead: LeadCreate, db: Client = Depends(get_supabase)):
     try:
         analisis = await analizar_lead_con_ia(lead.nombre, lead.mensaje, lead.empresa)
 
+        # Armando el diccionario SIN la clave 'score_ia' hacia Supabase
         data_para_supabase = {
             "nombre_contacto": lead.nombre,
             "email": lead.email,
             "empresa": lead.empresa,
             "mensaje_original": lead.mensaje,
             "industria": analisis.get("industria"),
-            "score_ia": analisis.get("score_ia"),
             "probabilidad_cierre": analisis.get("probabilidad_cierre"),
             "valor_estimado_usd": analisis.get("valor_estimado_usd"),
             "clasificacion": analisis.get("clasificacion"),
@@ -190,9 +194,9 @@ async def registrar_y_clasificar(lead: LeadCreate, db: Client = Depends(get_supa
 
         response = db.table("prospectos").insert(data_para_supabase).execute()
         
-        
+        # El envío de correo ahora depende de la clasificación (hot/warm), que es más segura
         try:
-            if analisis.get("score_ia", 0) > 0.4 and analisis.get("propuesta_email") != "Error":
+            if analisis.get("clasificacion") in ["hot", "warm"] and analisis.get("propuesta_email") != "Error":
                 resend.Emails.send({
                     "from": "J&A Inteligencia <onboarding@resend.dev>",
                     "to": lead.email,
@@ -210,23 +214,38 @@ async def registrar_y_clasificar(lead: LeadCreate, db: Client = Depends(get_supa
 
 #----CHATBOT
 @app.post("/api/v1/chat")
-async def chat_asistente(payload: dict):
+async def chat_asistente(payload: dict, db: Client = Depends(get_supabase)):
     api_key = os.getenv("OPENROUTER_API_KEY")
     url = "https://openrouter.ai/api/v1/chat/completions"
     
+    historial = payload.get("history", [])
     mensaje_usuario = payload.get("message", "")
     
-    # Prompt de sistema optimizado para J&A Inteligencia
+    # Reconstruimos la conversación acumulada para que la IA la procese
+    conversacion_txt = ""
+    for msg in historial:
+        rol = "Usuario" if msg["role"] == "user" else "Asistente"
+        conversacion_txt += f"{rol}: {msg['text']}\n"
+    conversacion_txt += f"Usuario: {mensaje_usuario}\n"
+
+    # PROMPT ÚNICO: Le pedimos al modelo que responda al cliente Y extraiga los datos al mismo tiempo
     prompt_sistema = (
-        "Eres el asistente experto de J&A Inteligencia. Tu misión es asesorar sobre: "
-        "1. Automatización de procesos con IA. 2. Desarrollo de Chatbots. 3. Análisis de datos. "
-        "Reglas: Sé breve (máx 3 líneas), usa un tono corporativo pero cercano. "
-        "Si preguntan precios, di que dependen del proyecto y que dejen sus datos en el formulario. "
-        "IMPORTANTE: No inventes servicios que no sean de tecnología/IA."
+        "Eres el asistente experto de J&A Inteligencia, especialistas en automatización con IA, chatbots y análisis de datos. "
+        "Reglas de comunicación con el cliente:\n"
+        "1. Sé breve (máx 3 líneas), usa un tono corporativo pero cercano.\n"
+        "2. Si el usuario muestra interés, pregúntale amablemente su nombre, correo, empresa y número de celular (opcional).\n"
+        "3. Dile que un asesor se comunicará con él en las próximas horas.\n\n"
+        "Regla técnica obligatoria (EXTRACCIÓN DE DATOS):\n"
+        "Analiza el historial acumulado. Al final de tu respuesta para el usuario, debes agregar OBLIGATORIAMENTE la etiqueta [DATA] "
+        "seguida de un objeto JSON con los datos que el usuario haya proporcionado hasta el momento (nombre, email, empresa, telefono). "
+        "Si no ha proporcionado alguno de ellos, pon null.\n"
+        "Ejemplo de formato de salida:\n"
+        "Hola Pedro, claro que sí... [DATA]{\"nombre\": \"Pedro\", \"email\": \"pedro@mail.com\", \"empresa\": null, \"telefono\": null}"
     )
 
     try:
         async with httpx.AsyncClient() as client:
+            # Una única petición a OpenRouter
             response = await client.post(
                 url,
                 headers={"Authorization": f"Bearer {api_key}"},
@@ -234,18 +253,67 @@ async def chat_asistente(payload: dict):
                     "model": "nvidia/nemotron-3-super-120b-a12b:free",
                     "messages": [
                         {"role": "system", "content": prompt_sistema},
-                        {"role": "user", "content": mensaje_usuario}
+                        {"role": "user", "content": conversacion_txt} # Le pasamos el contexto completo aquí
                     ],
-                    "temperature": 0.7
+                    "temperature": 0.3 # Temperatura baja para mayor precisión en el JSON
                 },
                 timeout=15.0
             )
-            result = response.json()
-            return {"response": result['choices'][0]['message']['content']}
+            
+            res_json = response.json()
+            
+            # Verificación de seguridad para evitar el error 'choices' si la API falla
+            if 'choices' not in res_json:
+                print(f"Error de OpenRouter API: {res_json}")
+                return {"response": "Estoy procesando la información. ¿Podrías repetirme tu mensaje?"}
+                
+            contenido_completo = res_json['choices'][0]['message']['content']
+
+            # Separamos la respuesta que va al cliente de los datos ocultos [DATA]
+            respuesta_web = contenido_completo
+            datos_json_str = None
+            
+            if "[DATA]" in contenido_completo:
+                partes = contenido_completo.split("[DATA]")
+                respuesta_web = partes[0].strip()
+                datos_json_str = partes[1].strip()
+
+            # Procesamiento e inserción en Supabase si se detectaron los datos
+            if datos_json_str:
+                try:
+                    datos_extraidos = json.loads(datos_json_str)
+                    
+                    def limpiar_valor(val):
+                        if not val or str(val).strip().lower() in ["null", "none", "", "no especificada"]:
+                            return None
+                        return str(val).strip()
+
+                    nombre = limpiar_valor(datos_extraidos.get("nombre"))
+                    email = limpiar_valor(datos_extraidos.get("email"))
+                    empresa = limpiar_valor(datos_extraidos.get("empresa"))
+                    telefono = limpiar_valor(datos_extraidos.get("telefono"))
+
+                    # Validación estricta: Nombre y Email son campos obligatorios
+                    if nombre and email:
+                        db.table("contactos_chatbot").insert({
+                            "nombre": nombre,
+                            "email": email,
+                            "empresa": empresa if empresa else "No especificada",
+                            "telefono": telefono,
+                            "mensaje_original": f"[Conversación] {mensaje_usuario}"
+                        }).execute()
+                        print("¡ÉXITO: Lead completo guardado correctamente en Supabase!")
+                    else:
+                        print(f"INFO: Datos insuficientes para guardar en DB todavía (Nombre: {nombre}, Email: {email})")
+                        
+                except Exception as parse_err:
+                    print(f"Error parseando el JSON interno de la respuesta: {parse_err}. Texto: {datos_json_str}")
+
+            return {"response": respuesta_web}
+            
     except Exception as e:
-        print(f"Error Chat: {e}")
-        return {"response": "Estoy procesando mucha información. ¿Podrías repetirme tu duda?"}
-    
+        print(f"Error general en el endpoint de chat: {e}")
+        return {"response": "Tuve un pequeño inconveniente técnico. ¿Me podrías repetir tu consulta?"}
 
 
 #CREACIÓN DE UN CRON PARA MANTENER ACTIVO SUPABASE
@@ -254,3 +322,6 @@ async def chat_asistente(payload: dict):
 #    """Endpoint Supabase activo."""
 #    db.table("prospectos").select("id").limit(1).execute()
 #    return {"status": "ok"}
+
+#CHATBOT
+#indexedDB.deleteDatabase('supabase.auth.token')
