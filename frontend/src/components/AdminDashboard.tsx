@@ -9,7 +9,7 @@ import {
 } from 'recharts';
 import { 
   Users, TrendingUp, ChevronRight, X,
-  LayoutDashboard, Target, Calendar, LogOut, Mail, CheckCircle2, MessageSquare
+  LayoutDashboard, Target, Calendar, LogOut, Mail, CheckCircle2
 } from 'lucide-react';
 
 export default function AdminDashboard() {
@@ -17,14 +17,16 @@ export default function AdminDashboard() {
   const [timeData, setTimeData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedLead, setSelectedLead] = useState<any>(null); 
-  const [updating, setUpdating] = useState(false); // Estado para bloquear el botón de aprobación
+  const [updating, setUpdating] = useState(false);
   const router = useRouter();
 
+  // Paleta de colores estricta para la gráfica de barras [Hot/Validado, Warm, Cold]
   const COLORS = ['#ef4444', '#f59e0b', '#64748b'];
 
-  useEffect(() => {
-    const checkUserAndFetch = async () => {
-      setLoading(true);
+
+useEffect(() => {
+    // 1. Comprobación inmediata y directa al cargar la página
+    const checkSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
         router.push('/login');
@@ -32,47 +34,70 @@ export default function AdminDashboard() {
         await fetchLeads();
       }
     };
-    checkUserAndFetch();
+
+    checkSession();
+
+    // 2. Escucha activa para cambios en tiempo real (como cierres de sesión)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!session) {
+        router.push('/login');
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, [router]);
 
   async function fetchLeads() {
-    const { data, error } = await supabase
-      .from('prospectos')
-      .select('*')
-      .order('created_at', { ascending: true });
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('prospectos')
+        .select('*')
+        .order('created_at', { ascending: true });
 
-    if (!error && data) {
-      setLeads([...data].reverse());
-      
-      const groups = data.reduce((acc: any, lead: any) => {
-        const date = new Date(lead.created_at).toLocaleDateString('es-ES', {
-          day: '2-digit',
-          month: 'short'
-        });
-        acc[date] = (acc[date] || 0) + 1;
-        return acc;
-      }, {});
+      if (!error && data) {
+        setLeads([...data].reverse());
+        
+        // Agrupación de volumen de consultas por fecha de forma segura
+        const groups = data.reduce((acc: any, lead: any) => {
+          if (!lead.created_at) return acc;
+          const fechaParseada = new Date(lead.created_at);
+          
+          if (!isNaN(fechaParseada.getTime())) {
+            const date = fechaParseada.toLocaleDateString('es-ES', {
+              day: '2-digit',
+              month: 'short'
+            });
+            acc[date] = (acc[date] || 0) + 1;
+          }
+          return acc;
+        }, {});
 
-      const chartData = Object.keys(groups).map(date => ({
-        fecha: date,
-        consultas: groups[date]
-      }));
-      
-      setTimeData(chartData);
+        const chartData = Object.keys(groups).map(date => ({
+          fecha: date,
+          consultas: groups[date]
+        }));
+        
+        setTimeData(chartData);
+      }
+    } catch (err) {
+      console.error("Error al procesar los datos de Supabase:", err);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
-  // NUEVA FUNCIÓN: Human-in-the-loop (Aprobar / Validar Lead de forma manual)
+  // Actualizar estado del prospecto (Human-in-the-loop)
   const handleAprobarLead = async (id: string) => {
     setUpdating(true);
     const { error } = await supabase
       .from('prospectos')
-      .update({ clasificacion: 'validado' }) // Cambia el estado en la base de datos
+      .update({ clasificacion: 'validado' }) 
       .eq('id', id);
 
     if (!error) {
-      // Actualiza el estado local de manera inmediata sin recargar toda la página
       setLeads(prev => prev.map(l => l.id === id ? { ...l, clasificacion: 'validado' } : l));
       setSelectedLead((prev: any) => prev ? { ...prev, clasificacion: 'validado' } : null);
     } else {
@@ -86,11 +111,12 @@ export default function AdminDashboard() {
     router.push('/login');
   };
 
+  // Función matemática de segmentación limpia para las barras
   const getQualityStats = () => {
     const counts = { hot: 0, warm: 0, cold: 0 };
     leads.forEach(l => {
-      const cat = l.clasificacion?.toLowerCase();
-      if (cat === 'hot' || cat === 'validado') counts.hot++; // Contamos validados en zona caliente
+      const cat = l.clasificacion?.toLowerCase().trim() || 'cold';
+      if (cat === 'hot' || cat === 'validado') counts.hot++;
       else if (cat === 'warm') counts.warm++;
       else counts.cold++;
     });
@@ -122,26 +148,36 @@ export default function AdminDashboard() {
           </div>
 
           <div className="flex items-center gap-4">
-            <div className="grid grid-cols-3 gap-4"> {/* Cambiado a 3 columnas para meter Revenue */}
-                <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-3">
-                    <div className="p-2 bg-blue-50 rounded-lg"><Users size={20} className="text-blue-600" /></div>
-                    <div><p className="text-[10px] text-slate-400 font-black">LEADS</p><p className="text-lg font-bold">{leads.length}</p></div>
+            <div className="grid grid-cols-3 gap-4">
+              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-3">
+                <div className="p-2 bg-blue-50 rounded-lg"><Users size={20} className="text-blue-600" /></div>
+                <div><p className="text-[10px] text-slate-400 font-black">LEADS</p><p className="text-lg font-bold">{leads.length}</p></div>
+              </div>
+              
+              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-3">
+                <div className="p-2 bg-red-50 rounded-lg"><Target size={20} className="text-red-600" /></div>
+                <div>
+                  <p className="text-[10px] text-slate-400 font-black">HOT</p>
+                  <p className="text-lg font-bold">
+                    {leads.filter(l => {
+                      const cat = l.clasificacion?.toLowerCase().trim();
+                      return cat === 'hot' || cat === 'validado';
+                    }).length}
+                  </p>
                 </div>
-                <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-3">
-                    <div className="p-2 bg-red-50 rounded-lg"><Target size={20} className="text-red-600" /></div>
-                    <div><p className="text-[10px] text-slate-400 font-black">HOT</p><p className="text-lg font-bold">{leads.filter(l => l.clasificacion === 'hot' || l.clasificacion === 'validado').length}</p></div>
+              </div>
+              
+              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-3">
+                <div className="p-2 bg-emerald-50 rounded-lg"><TrendingUp size={20} className="text-emerald-600" /></div>
+                <div>
+                  <p className="text-[10px] text-slate-400 font-black">REVENUE EST.</p>
+                  <p className="text-lg font-bold text-emerald-600">
+                    ${leads.reduce((acc, curr) => acc + (Number(curr.valor_estimado_usd) || Number(curr.valor_usd) || 0), 0).toLocaleString()}
+                  </p>
                 </div>
-                {/* NIVEL 3: KPI DE REVENUE PROYECTADO AUTOMÁTICO */}
-                <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-3">
-                    <div className="p-2 bg-emerald-50 rounded-lg"><TrendingUp size={20} className="text-emerald-600" /></div>
-                    <div>
-                      <p className="text-[10px] text-slate-400 font-black">REVENUE EST.</p>
-                      <p className="text-lg font-bold text-emerald-600">
-                        ${leads.reduce((acc, curr) => acc + (Number(curr.valor_estimado_usd) || 0), 0).toLocaleString()}
-                      </p>
-                    </div>
-                </div>
+              </div>
             </div>
+            
             <button onClick={handleSignOut} className="p-3 bg-white border border-slate-200 rounded-2xl text-slate-400 hover:text-red-600 transition-all shadow-sm">
               <LogOut size={24} />
             </button>
@@ -194,13 +230,11 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* TABLA MODIFICADA CON NUEVAS COLUMNAS PREDICTIVAS */}
+        {/* TABLA DE LEADS */}
         <div className="bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden">
           <div className="p-6 border-b border-slate-100 flex justify-between items-center">
             <h2 className="font-bold text-slate-800 tracking-tight">Leads Recientes</h2>
-            <div className="flex gap-2">
-                <span className="text-[10px] bg-green-50 text-green-600 px-3 py-1 rounded-full font-black border border-green-100 uppercase">Live Metrics</span>
-            </div>
+            <span className="text-[10px] bg-green-50 text-green-600 px-3 py-1 rounded-full font-black border border-green-100 uppercase">Live Metrics</span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
@@ -208,84 +242,82 @@ export default function AdminDashboard() {
                 <tr>
                   <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Prospecto</th>
                   <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Clasificación</th>
-                  {/* NIVEL 2: Columna Predictiva Visual */}
                   <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Cierre Probable</th>
-                  {/* NIVEL 3: Valor Estimado */}
                   <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Valor USD</th>
                   <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Análisis</th>
                   <th className="px-6 py-4 text-right"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {leads.map((lead) => (
-                  <tr key={lead.id} className="hover:bg-slate-50/50 transition-all group">
-                    <td className="px-6 py-6">
+                {leads.map((lead) => {
+                  const currentCat = lead.clasificacion?.toLowerCase().trim() || 'cold';
+                  return (
+                    <tr key={lead.id} className="hover:bg-slate-50/50 transition-all group">
+                      <td className="px-6 py-6">
                         <div className="flex items-center gap-4">
-                            <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-500 font-bold border border-slate-200 uppercase">
-                              {lead.nombre_contacto?.[0] || 'U'}
-                            </div>
-                            <div>
-                                <p className="text-slate-900 font-bold text-sm">{lead.nombre_contacto}</p>
-                                <p className="text-[10px] text-slate-400 font-medium">{lead.email}</p>
-                            </div>
+                          <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-500 font-bold border border-slate-200 uppercase">
+                            {lead.nombre_contacto?.[0] || 'U'}
+                          </div>
+                          <div>
+                            <p className="text-slate-900 font-bold text-sm">{lead.nombre_contacto}</p>
+                            <p className="text-[10px] text-slate-400 font-medium">{lead.email}</p>
+                          </div>
                         </div>
-                    </td>
-                    <td className="px-6 py-6 text-center">
-                      <div className={`px-2 py-1 inline-block rounded-lg text-[10px] font-black border ${
-                        lead.clasificacion === 'validado' ? 'bg-emerald-50 border-emerald-100 text-emerald-600' :
-                        lead.clasificacion === 'hot' ? 'bg-red-50 border-red-100 text-red-600' :
-                        lead.clasificacion === 'warm' ? 'bg-orange-50 border-orange-100 text-orange-600' :
-                        'bg-slate-100 border-slate-200 text-slate-500'
-                      }`}>
-                        {lead.clasificacion?.toUpperCase() || 'COLD'}
-                      </div>
-                    </td>
-                    {/* BARRA DE PROBABILIDAD (Nivel 2) */}
-                    <td className="px-6 py-6 min-w-[120px]">
-                      <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                        <div 
-                          className={`h-full transition-all ${Number(lead.probabilidad_cierre) > 0.7 ? 'bg-emerald-500' : 'bg-blue-500'}`}
-                          style={{ width: `${(Number(lead.probabilidad_cierre) || 0) * 100}%` }}
-                        />
-                      </div>
-                      <p className="text-[9px] text-slate-400 mt-1 font-bold">{Math.round((Number(lead.probabilidad_cierre) || 0) * 100)}% de éxito</p>
-                    </td>
-                    {/* VALOR ESTIMADO USD (Nivel 3) */}
-                    <td className="px-6 py-6 text-sm font-bold text-slate-700">
-                      ${(Number(lead.valor_estimado_usd) || 0).toLocaleString()}
-                    </td>
-                    <td className="px-6 py-6 max-w-xs">
+                      </td>
+                      <td className="px-6 py-6 text-center">
+                        <div className={`px-2 py-1 inline-block rounded-lg text-[10px] font-black border ${
+                          currentCat === 'validado' ? 'bg-emerald-50 border-emerald-100 text-emerald-600' :
+                          currentCat === 'hot' ? 'bg-red-50 border-red-100 text-red-600' :
+                          currentCat === 'warm' ? 'bg-orange-50 border-orange-100 text-orange-600' :
+                          'bg-slate-100 border-slate-200 text-slate-500'
+                        }`}>
+                          {lead.clasificacion?.toUpperCase() || 'COLD'}
+                        </div>
+                      </td>
+                      <td className="px-6 py-6 min-w-[120px]">
+                        <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                          <div 
+                            className={`h-full transition-all ${Number(lead.probabilidad_cierre) > 0.7 ? 'bg-emerald-500' : 'bg-blue-500'}`}
+                            style={{ width: `${(Number(lead.probabilidad_cierre) || 0) * 100}%` }}
+                          />
+                        </div>
+                        <p className="text-[9px] text-slate-400 mt-1 font-bold">{Math.round((Number(lead.probabilidad_cierre) || 0) * 100)}% de éxito</p>
+                      </td>
+                      <td className="px-6 py-6 text-sm font-bold text-slate-700">
+                        ${(Number(lead.valor_estimado_usd) || Number(lead.valor_usd) || 0).toLocaleString()}
+                      </td>
+                      <td className="px-6 py-6 max-w-xs">
                         <p className="text-xs text-slate-500 line-clamp-1 italic">"{lead.brief_comercial || 'Sin análisis'}"</p>
-                    </td>
-                    <td className="px-6 py-6 text-right">
-                       <button 
-                        onClick={() => setSelectedLead(lead)}
-                        className="p-2 bg-slate-100 text-slate-400 group-hover:bg-blue-600 group-hover:text-white rounded-xl transition-all shadow-sm"
-                       >
-                        <ChevronRight size={18} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="px-6 py-6 text-right">
+                        <button 
+                          onClick={() => setSelectedLead(lead)}
+                          className="p-2 bg-slate-100 text-slate-400 group-hover:bg-blue-600 group-hover:text-white rounded-xl transition-all shadow-sm"
+                        >
+                          <ChevronRight size={18} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         </div>
       </div>
 
-      {/* MODAL CON FUNCIÓN HUMAN-IN-THE-LOOP */}
+      {/* MODAL GESTIÓN */}
       {selectedLead && (
         <div className="fixed inset-0 bg-slate-950/40 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
-          <div className="bg-white rounded-[2rem] shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden border border-slate-200 flex flex-col scale-in-center">
-            {/* Header del Modal */}
+          <div className="bg-white rounded-[2rem] shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden border border-slate-200 flex flex-col">
             <div className="p-8 border-b border-slate-100 flex justify-between items-start bg-slate-50/50">
               <div>
                 <div className="flex items-center gap-3 mb-2">
-                    <span className={`px-2 py-1 rounded-md text-[9px] font-black uppercase border ${
-                        selectedLead.clasificacion === 'validado' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
-                        selectedLead.clasificacion === 'hot' ? 'bg-red-50 text-red-600 border-red-100' : 'bg-slate-200 text-slate-600'
-                    }`}>{selectedLead.clasificacion}</span>
-                    <span className="text-[10px] text-slate-400 font-bold">{new Date(selectedLead.created_at).toLocaleDateString()}</span>
+                  <span className={`px-2 py-1 rounded-md text-[9px] font-black uppercase border ${
+                    selectedLead.clasificacion?.toLowerCase().trim() === 'validado' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
+                    selectedLead.clasificacion?.toLowerCase().trim() === 'hot' ? 'bg-red-50 text-red-600 border-red-100' : 'bg-slate-200 text-slate-600'
+                  }`}>{selectedLead.clasificacion}</span>
+                  <span className="text-[10px] text-slate-400 font-bold">{new Date(selectedLead.created_at).toLocaleDateString()}</span>
                 </div>
                 <h2 className="text-3xl font-black text-slate-900 tracking-tight">{selectedLead.nombre_contacto}</h2>
                 <p className="text-blue-600 font-bold text-sm">{selectedLead.empresa || 'Empresa Independiente'}</p>
@@ -298,31 +330,27 @@ export default function AdminDashboard() {
               </button>
             </div>
 
-            {/* Contenido del Modal */}
             <div className="p-8 overflow-y-auto space-y-6 flex-1">
-              {/* Resumen Comercial de IA e Indicadores Financieros */}
               <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Servicio Sugerido</p>
-                      <p className="text-sm font-bold text-slate-700">{selectedLead.servicio_sugerido || 'Consultoría General'}</p>
-                  </div>
-                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Ingreso Estimado</p>
-                      <p className="text-sm font-bold text-emerald-600">${(Number(selectedLead.valor_estimado_usd) || 0).toLocaleString()} USD</p>
-                  </div>
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Servicio Sugerido</p>
+                  <p className="text-sm font-bold text-slate-700">{selectedLead.servicio_sugerido || 'Consultoría General'}</p>
+                </div>
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Ingreso Estimado</p>
+                  <p className="text-sm font-bold text-emerald-600">${(Number(selectedLead.valor_estimado_usd) || Number(selectedLead.valor_usd) || 0).toLocaleString()} USD</p>
+                </div>
               </div>
 
-              {/* Mensaje Original */}
               <div className="space-y-2">
                 <h4 className="text-xs font-black text-slate-900 uppercase tracking-widest flex items-center gap-2">
-                    <Mail size={14} className="text-slate-400" /> Mensaje del Cliente
+                  <Mail size={14} className="text-slate-400" /> Mensaje del Cliente
                 </h4>
                 <div className="p-5 bg-white border border-slate-200 rounded-2xl text-sm text-slate-600 leading-relaxed shadow-inner">
                   "{selectedLead.mensaje_original}"
                 </div>
               </div>
 
-              {/* Brief Comercial */}
               <div className="space-y-2">
                 <h4 className="text-xs font-black text-blue-600 uppercase tracking-widest">Brief Ejecutivo (Generado por IA)</h4>
                 <div className="p-5 bg-blue-50/50 border border-blue-100 rounded-2xl text-sm text-slate-800 font-medium leading-relaxed">
@@ -331,25 +359,24 @@ export default function AdminDashboard() {
               </div>
             </div>
             
-            {/* FOOTER DEL MODAL CON ACCIONES DE GESTIÓN (Human-in-the-loop) */}
             <div className="p-6 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-4">
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider">J&A Intelligence</p>
-                
-                <div className="flex gap-2">
-                  {selectedLead.clasificacion !== 'validado' ? (
-                    <button
-                      onClick={() => handleAprobarLead(selectedLead.id)}
-                      disabled={updating}
-                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl flex items-center gap-2 transition-colors disabled:opacity-50"
-                    >
-                      <CheckCircle2 size={16} /> Validar Lead
-                    </button>
-                  ) : (
-                    <span className="text-emerald-600 font-bold text-xs px-3 py-2 bg-emerald-100 rounded-xl flex items-center gap-1.5">
-                      <CheckCircle2 size={16} /> Lead Auditado
-                    </span>
-                  )}
-                </div>
+              <p className="text-[9px] font-black text-slate-400 tracking-wider uppercase">J&A Intelligence</p>
+              
+              <div className="flex gap-2">
+                {selectedLead.clasificacion?.toLowerCase().trim() !== 'validado' ? (
+                  <button
+                    onClick={() => handleAprobarLead(selectedLead.id)}
+                    disabled={updating}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl flex items-center gap-2 transition-colors disabled:opacity-50"
+                  >
+                    <CheckCircle2 size={16} /> Validar Lead
+                  </button>
+                ) : (
+                  <span className="text-emerald-600 font-bold text-xs px-3 py-2 bg-emerald-100 rounded-xl flex items-center gap-1.5">
+                    <CheckCircle2 size={16} /> Lead Auditado
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         </div>

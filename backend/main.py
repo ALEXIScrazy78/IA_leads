@@ -21,7 +21,7 @@ resend.api_key = os.getenv("RESEND_API_KEY")
 
 app = FastAPI(title="AI Lead Intelligence Engine")
 
-# --- CORS CONFIG ---
+
 #_raw_origins = os.getenv("ALLOWED_ORIGINS", "*")
 #allowed_origins = [o.strip() for o in _raw_origins.split(",")]
 
@@ -33,7 +33,6 @@ app = FastAPI(title="AI Lead Intelligence Engine")
 #)
 
 
-# --- CORS CONFIG ---
 ALLOWED_ORIGIN_PATTERNS = [
     r"https://ia-leads.*\.vercel\.app$",
     r"http://localhost:\d+$",
@@ -253,9 +252,9 @@ async def chat_asistente(payload: dict, db: Client = Depends(get_supabase)):
                     "model": "nvidia/nemotron-3-super-120b-a12b:free",
                     "messages": [
                         {"role": "system", "content": prompt_sistema},
-                        {"role": "user", "content": conversacion_txt} # Le pasamos el contexto completo aquí
+                        {"role": "user", "content": conversacion_txt}
                     ],
-                    "temperature": 0.3 # Temperatura baja para mayor precisión en el JSON
+                    "temperature": 0.3
                 },
                 timeout=15.0
             )
@@ -278,7 +277,7 @@ async def chat_asistente(payload: dict, db: Client = Depends(get_supabase)):
                 respuesta_web = partes[0].strip()
                 datos_json_str = partes[1].strip()
 
-            # Procesamiento e inserción en Supabase si se detectaron los datos
+            # Procesamiento 
             if datos_json_str:
                 try:
                     datos_extraidos = json.loads(datos_json_str)
@@ -314,14 +313,3 @@ async def chat_asistente(payload: dict, db: Client = Depends(get_supabase)):
     except Exception as e:
         print(f"Error general en el endpoint de chat: {e}")
         return {"response": "Tuve un pequeño inconveniente técnico. ¿Me podrías repetir tu consulta?"}
-
-
-#CREACIÓN DE UN CRON PARA MANTENER ACTIVO SUPABASE
-#@app.get("ehttps://tudominio.com/api/v1/health")
-#def health_check(db: Client = Depends(get_supabase)):
-#    """Endpoint Supabase activo."""
-#    db.table("prospectos").select("id").limit(1).execute()
-#    return {"status": "ok"}
-
-#CHATBOT
-#indexedDB.deleteDatabase('supabase.auth.token')
